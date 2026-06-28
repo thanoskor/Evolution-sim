@@ -27,7 +27,6 @@ add_executable(${PROJECT_NAME} main.c
         brain.c
         dna_and_traits.c
         sim.h
-        agent.c
         storage.c)
 #set(raylib_VERBOSE 1)
 target_link_libraries(${PROJECT_NAME} raylib)

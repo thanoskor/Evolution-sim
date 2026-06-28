@@ -13,10 +13,6 @@ void generate_random_dna(dna_t *dna) {
 }
 
 //helpers
-static inline float u8_norm(unsigned char x) {
-    return (float)x / 255.0f;
-}
-
 static inline float clamp_tanh(float x)
 {
     return tanhf(x);
@@ -32,37 +28,45 @@ static inline float remap_range(float x01, float min, float max) {
 
 
 //decoding
-static void decode_latent(const dna_t *dna, float latent[LATENT_SIZE]) {
-    // First decode to uniform space
-    for (int i = 0; i < LATENT_SIZE; i++) {
-        unsigned int val = (dna->genes[i*2] << 8) | dna->genes[i*2+1];
-        latent[i] = (val / 65535.0f) * 2.0f - 1.0f;
-    }
+static float decode_latent_x(const dna_t *dna, size_t latent_index) {
+    assert(LATENT_SIZE == DNA_LENGTH / 2);
+    assert(latent_index < LATENT_SIZE);
+
+    unsigned int val = (dna->genes[latent_index*2] << 8) | dna->genes[latent_index*2+1];
+    return (val / 65535.0f) * 2.0f - 1.0f;
 }
 
 
-void decode_traits(const float latent[LATENT_SIZE], traits_t *t) {
-    // Unpack core scalar traits
-    t->max_speed  = remap_range(latent[0], 1.0f,  5.0f);
-    t->turn_rate  = remap_range(latent[1], 0.01f, 0.05f);
-    t->size       = remap_range(latent[2], 5.0f,  25.0f);
-    t->max_energy = remap_range(latent[3], 50.0f, 300.0f);
+//decode trait functions
+float decode_max_speed(const dna_t *dna) {
+    return remap_range(decode_latent_x(dna, 0), 1.0f,  5.0f);
+}
 
-    // Unpack antennas using an entirely unique, unconstrained linear projection matrix
-    assert(LATENT_SIZE > ANTENNA_COUNT + 4); // 4 are the number of traits above maintain that (:
+float decode_turn_rate(const dna_t *dna) {
+    return remap_range(decode_latent_x(dna, 1), 0.01f, 0.05f);
+}
+
+float decode_size(const dna_t *dna) {
+    return remap_range(decode_latent_x(dna, 2), 5.0f,  25.0f);
+}
+
+float decode_max_energy(const dna_t *dna) {
+    return remap_range(decode_latent_x(dna, 2), 50.0f, 300.0f);
+}
+
+void decode_antenna_lengths(const dna_t *dna, float antenna_lengths[ANTENNA_COUNT]) {
     for (int i = 0; i < ANTENNA_COUNT; i++) {
-        t->antenna_length[i] = remap_range(latent[i + 4], 0.f, 120.f);
+        antenna_lengths[i] = remap_range(decode_latent_x(dna, i + 4), 0.f, 120.f);
     }
 }
 
+void decode_brain(const dna_t *dna, brain_t *b) {
+    float z[16];
+    for (int i = 0; i < 16; i++) {
+        z[i] = decode_latent_x(dna, 16 + i);
+    }
+    assert(LATENT_SIZE >= 32);
 
-void decode_brain(const float latent[32], brain_t *b)
-{
-    const float *z = &latent[15];
-
-    // -----------------------------
-    // GROUPS
-    // -----------------------------
     float g_inhid   = z[0];
     float g_hidout  = z[1];
     float g_bhid    = z[2];
@@ -73,9 +77,7 @@ void decode_brain(const float latent[32], brain_t *b)
     float phase3 = z[6];
     float phase4 = z[7];
 
-    // -----------------------------
     // INPUT -> HIDDEN (78 weights)
-    // -----------------------------
     for (int i = 0; i < INPUTS; i++) {
         for (int h = 0; h < HIDDEN; h++) {
 
@@ -90,9 +92,7 @@ void decode_brain(const float latent[32], brain_t *b)
         }
     }
 
-    // -----------------------------
     // HIDDEN BIAS (6)
-    // -----------------------------
     for (int h = 0; h < HIDDEN; h++) {
 
         float v =
@@ -103,9 +103,7 @@ void decode_brain(const float latent[32], brain_t *b)
         b->b_hidden[h] = clamp_tanh(v);
     }
 
-    // -----------------------------
     // HIDDEN -> OUTPUT (36 weights)
-    // -----------------------------
     for (int h = 0; h < HIDDEN; h++) {
         for (int o = 0; o < OUTPUTS; o++) {
 
@@ -120,9 +118,7 @@ void decode_brain(const float latent[32], brain_t *b)
         }
     }
 
-    // -----------------------------
     // OUTPUT BIAS (6)
-    // -----------------------------
     for (int o = 0; o < OUTPUTS; o++) {
 
         float v =
@@ -134,10 +130,3 @@ void decode_brain(const float latent[32], brain_t *b)
     }
 }
 
-
-void decode_dna(agent_t *agent) {
-    float latent[LATENT_SIZE];
-    decode_latent(agent->dna, latent);
-    decode_traits(latent, &agent->traits);
-    decode_brain(latent, agent->brain);
-}
